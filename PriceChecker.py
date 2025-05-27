@@ -124,11 +124,11 @@ def print_log(message, type="INFO", file="log.txt"):
 if __name__ == "__main__":
     for url in URLS:
         discount, title = get_discount_and_title(url)
+        product_name = extract_product_name(title)
         if discount is not None and title:
-            product_name = extract_product_name(title)
             print_log(f"The product {product_name} has a discount of {discount}% ")
             if discount >= 10:
                 send_email_smtp(discount, url, product_name)
                 print_log(f"An email has been sent about the product {product_name}.")
         elif discount is None:
-            print_log(f"No discount found for the product {title}.")
+            print_log(f"No discount found for the product {product_name}.")

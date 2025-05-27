@@ -27,7 +27,7 @@ You can schedule a task so this script is run periodically, this way you will ge
 
 ### 1. `credentials.json` Format
 
-Write the file named `credentials.json` in the same directory as the script with the following structure:
+Create a file named `credentials.json` in the same directory as the script with the following structure:
 
 ```json
 {
