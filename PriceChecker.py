@@ -52,7 +52,7 @@ def get_discount_and_title(url):
     return percentage, title
 
 def send_email_smtp(discount, url, title):
-    subject = "Wishlist Product Tracker"
+    subject = f"Product Tracker - {title} at {discount}% off"
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     html_body = f"""
     <html>
@@ -80,6 +80,23 @@ def send_email_smtp(discount, url, title):
         server.starttls()
         server.login(SMTP_USER, SMTP_PASS)
         server.sendmail(SMTP_USER, RECIPIENT, msg.as_string())
+
+def was_email_sent_recently(product_name, days=2, log_file="log.txt"):
+    now = datetime.datetime.now()
+    try:
+        with open(log_file, "r", encoding="utf-8") as f:
+            for line in reversed(f.readlines()):
+                if f"Notification sent: {product_name} with a {discount}% discount." in line:
+                    # Extrae la fecha del log
+                    date_str = line[:19]  # 'YYYY-MM-DD HH:MM:SS'
+                    log_date = datetime.datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
+                    if (now - log_date).days < days:
+                        return True
+                    else:
+                        return False
+    except Exception:
+        pass
+    return False
 
 def extract_product_name(full_title):
     # Remove leading and trailing spaces
@@ -128,7 +145,10 @@ if __name__ == "__main__":
         if discount is not None and title:
             print_log(f"The product {product_name} has a discount of {discount}% ")
             if discount >= 10:
-                send_email_smtp(discount, url, product_name)
-                print_log(f"An email has been sent about the product {product_name}.")
+                if not was_email_sent_recently(product_name):
+                    send_email_smtp(discount, url, product_name)
+                    print_log(f"Notification sent: {product_name} with a {discount}% discount.")
+                else:
+                    print_log(f"Email already sent for {product_name} in the last 2 days.")
         elif discount is None:
             print_log(f"No discount found for the product {product_name}.")
