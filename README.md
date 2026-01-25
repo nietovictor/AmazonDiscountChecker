@@ -87,3 +87,38 @@ https://www.amazon.com/dp/B09G3HRMVB
 - The discount threshold can be changed by modifying the value in the script (`if discount >= 10:`).
 
 ---
+
+## Uso
+
+1. Añade los enlaces de productos de Amazon en el archivo `products.txt`, uno por línea
+2. Opcionalmente, puedes especificar un threshold de descuento personalizado para cada producto añadiendo el porcentaje después del enlace, separado por un espacio:
+   ```
+   https://www.amazon.es/dp/PRODUCTO1
+   https://www.amazon.es/dp/PRODUCTO2 
+   30
+   https://www.amazon.es/dp/PRODUCTO3 
+   50
+   ```
+   En el ejemplo anterior, el PRODUCTO2 notificará cuando haya un descuento ≥30% y el PRODUCTO3 cuando sea ≥50%. Si no se especifica, se usa el threshold global configurado.
+
+3. Ejecuta el script:
+   ```bash
+   python main.py
+   ```
+
+4. Revisa tu correo electrónico para ver las notificaciones cuando se encuentren descuentos.
+
+5. **Automatiza las comprobaciones diarias:**  
+   Puedes programar este script para que se ejecute automáticamente todos los días utilizando el programador de tareas de tu sistema operativo:
+   - **Windows:** Usa el Programador de tareas ([Cómo programar un script de Python en Windows](https://datatofish.com/python-script-windows-scheduler/))
+   - **Linux/macOS:** Usa trabajos de `cron` ([Cómo programar un trabajo de cron](https://opensource.com/article/19/7/getting-started-cron))
+
+   Esto es lo que hago para no tener que ejecutarlo manualmente.
+
+---
+
+## Notas
+
+- El script está configurado para Gmail SMTP. Si utilizas otro proveedor, actualiza la configuración de SMTP en el script.
+- Asegúrate de que tu cuenta de Gmail tenga [habilitados los contraseñas de aplicación](https://support.google.com/accounts/answer/185833?hl=en).
+- El umbral de descuento se puede cambiar modificando el valor en el script (`if discount >= 10:`).
