@@ -26,13 +26,18 @@ SMTP_PASS = creds["app_password"]
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 
-# Replace single-list URL reading with per-product threshold parsing
-DEFAULT_THRESHOLD = 15
+# Default threshold configuration
+DEFAULT_DISCOUNT_THRESHOLD = 15
 
-def load_products(path="products.txt", default_threshold=DEFAULT_THRESHOLD):
+def load_products(path="products.txt", default_discount_threshold=DEFAULT_DISCOUNT_THRESHOLD):
     """
-    Lee products.txt y devuelve una lista de dicts: {"url": ..., "threshold": ...}
-    Si la línea siguiente al URL contiene un número (ej. 20 o 20%), se usa como threshold.
+    Lee products.txt y devuelve una lista de dicts:
+    {"url": ..., "mode": "price"|"discount", "threshold": ...}
+
+    Reglas para la línea siguiente al URL:
+    - 15   -> modo precio (notifica si precio <= 15)
+    - 15%  -> modo descuento (notifica si descuento >= 15)
+    Si no se especifica, usa el modo descuento con el threshold por defecto.
     """
     products = []
     try:
@@ -48,31 +53,51 @@ def load_products(path="products.txt", default_threshold=DEFAULT_THRESHOLD):
         # Considerar como URL si empieza por http o contiene 'amazon.'
         if line.lower().startswith("http") or "amazon." in line.lower():
             url = line
-            threshold = default_threshold
-            # Verificar la siguiente línea si existe y es un número (con o sin '%')
+            mode = "discount"
+            threshold = float(default_discount_threshold)
+            # Verificar la siguiente línea si existe y define umbral explícito
             if i + 1 < len(raw_lines):
                 nxt = raw_lines[i + 1]
-                m = re.match(r'^(\d{1,3})\s*%?$', nxt)
-                if m:
-                    threshold = int(m.group(1))
+                m_discount = re.match(r'^(\d+(?:[\.,]\d{1,2})?)\s*%\s*$', nxt)
+                m_price = re.match(r'^(\d+(?:[\.,]\d{1,2})?)\s*$', nxt)
+                if m_discount:
+                    mode = "discount"
+                    threshold = float(m_discount.group(1).replace(",", "."))
                     i += 1  # consumir la línea del threshold
-            products.append({"url": url, "threshold": threshold})
+                elif m_price:
+                    mode = "price"
+                    threshold = float(m_price.group(1).replace(",", "."))
+                    i += 1  # consumir la línea del threshold
+            products.append({"url": url, "mode": mode, "threshold": threshold})
         else:
             # Línea no reconocida como URL -> ignorar
             pass
         i += 1
     return products
 
-# Cargar productos (cada producto es un dict con url y threshold)
-PRODUCTS = load_products("products.txt", DEFAULT_THRESHOLD)
+# Cargar productos (cada producto es un dict con url, mode y threshold)
+PRODUCTS = load_products("products.txt", DEFAULT_DISCOUNT_THRESHOLD)
 
 # Functions
-def get_discount_and_title(url):
+def get_product_data(url):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     }
     resp = requests.get(url, headers=headers)
     soup = BeautifulSoup(resp.text, "html.parser")
+    # Price (whole number)
+    current_price = None
+    try:
+        price_span = soup.find("span", class_="a-price-whole")
+        if price_span:
+            price_text = price_span.get_text(strip=True)
+            digits = re.sub(r"[^\d]", "", price_text)
+            if digits:
+                current_price = float(digits)
+    except Exception as e:
+        print_log(f"Error extracting current price: {e}", type="ERROR", file=log_file)
+        current_price = None
+
     # Discount
     percentage = None
     try:
@@ -93,21 +118,56 @@ def get_discount_and_title(url):
     except Exception as e:
         print_log(f"Error extracting product title: {e}", type="ERROR", file=log_file)
         title = ""
-    return percentage, title
+    return current_price, percentage, title
 
-def send_email_smtp(discount, url, title):
-    subject = f"Product Tracker - {title} at {discount}% off"
+def send_email_smtp(url, title, mode, current_price=None, discount=None, threshold=None):
+    if mode == "price":
+                subject = f"Product Tracker - {title} at {current_price:.2f}€"
+                status_label = "Price alert"
+                status_color = "#0f766e"
+                trigger_line = f"""
+                <div style=\"display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:10px;\"><span style=\"font-size:13px;color:#6b7280;\">Current price</span><span style=\"font-size:16px;font-weight:700;color:#111827;\">{current_price:.2f}€</span></div>
+                <div style=\"display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:10px;\"><span style=\"font-size:13px;color:#6b7280;\">Alert price</span><span style=\"font-size:16px;font-weight:700;color:#111827;\">{threshold:.2f}€</span></div>
+                """
+    else:
+        subject = f"Product Tracker - {title} at {discount:.0f}% off"
+        status_label = "Discount alert"
+        status_color = "#6d28d9"
+        trigger_line = f"""
+        <div style=\"display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:10px;\"><span style=\"font-size:13px;color:#6b7280;\">Discount</span><span style=\"font-size:16px;font-weight:700;color:#111827;\">{discount:.0f}%</span></div>
+        <div style=\"display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:10px;\"><span style=\"font-size:13px;color:#6b7280;\">Alert discount</span><span style=\"font-size:16px;font-weight:700;color:#111827;\">{threshold:.0f}%</span></div>
+        """
+
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     html_body = f"""
     <html>
       <body>
-        <h2>Wishlist Product Tracker Notification</h2>
-        <p><strong>Product:</strong> {title}</p>
-        <p><strong>Discount:</strong> {discount}%</p>
-        <p><strong>URL:</strong> <a href="{url}">{url}</a></p>
-        <p><strong>Date:</strong> {now}</p>
-        <hr>
-        <p>This is an automated notification from your Amazon price tracker.</p>
+                <div style="background:#f3f4f6;padding:24px;font-family:Segoe UI,Arial,sans-serif;color:#111827;">
+                    <div style="max-width:640px;margin:0 auto;background:#ffffff;border-radius:12px;border:1px solid #e5e7eb;overflow:hidden;">
+                        <div style="padding:20px 24px;background:linear-gradient(135deg,#111827 0%,#1f2937 100%);color:#ffffff;">
+                            <p style="margin:0 0 8px 0;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;opacity:0.85;">Amazon Tracker</p>
+                            <h2 style="margin:0;font-size:22px;font-weight:700;line-height:1.3;">{title}</h2>
+                            <span style="display:inline-block;margin-top:12px;padding:6px 10px;border-radius:999px;background:{status_color};font-size:12px;font-weight:600;">{status_label}</span>
+                        </div>
+
+                        <div style="padding:22px 24px;">
+                            <div style="display:block;">
+                                {trigger_line}
+                            </div>
+
+                            <div style="margin-top:18px;">
+                                <a href="{url}" style="display:inline-block;background:#111827;color:#ffffff;text-decoration:none;padding:10px 14px;border-radius:8px;font-size:14px;font-weight:600;">Open product</a>
+                            </div>
+
+                            <p style="margin:18px 0 0 0;font-size:12px;color:#6b7280;word-break:break-all;">{url}</p>
+                            <p style="margin:8px 0 0 0;font-size:12px;color:#6b7280;">Detected at: {now}</p>
+                        </div>
+
+                        <div style="padding:14px 24px;border-top:1px solid #e5e7eb;background:#fafafa;color:#6b7280;font-size:12px;">
+                            This is an automated notification from your Amazon price tracker.
+                        </div>
+                    </div>
+                </div>
       </body>
     </html>
     """
@@ -186,17 +246,33 @@ if __name__ == "__main__":
     log_file = os.path.join(LOGS_DIR, "amazonLogs.txt")
     for item in PRODUCTS:
         url = item["url"]
-        threshold = item.get("threshold", DEFAULT_THRESHOLD)
-        discount, title = get_discount_and_title(url)
+        mode = item.get("mode", "discount")
+        threshold = item.get("threshold", float(DEFAULT_DISCOUNT_THRESHOLD))
+        current_price, discount, title = get_product_data(url)
         product_name = extract_product_name(title)
-        if discount is not None and title:
-            print_log(f"The product {product_name} has a discount of {discount}% ", file=log_file)
-            if discount >= threshold:
-                print_text = f"Notification sent: {product_name} with a {discount}% discount."
-                if not was_email_sent_recently(log_file=log_file, text_to_check=print_text):
-                    send_email_smtp(discount, url, product_name)
-                    print_log(print_text, file=log_file)
-                else:
-                    print_log(f"Email already sent for {product_name} in the last {2} days.", file=log_file)
-        elif discount is None:
-            print_log(f"No discount found for the product {product_name}.", file=log_file)
+
+        if mode == "price":
+            if current_price is not None and title:
+                print_log(f"The product {product_name} currently costs {current_price:.2f}€.", file=log_file)
+                if current_price <= threshold:
+                    print_text = f"Notification sent: {product_name} at {current_price:.2f}€ (threshold {threshold:.2f}€)."
+                    if not was_email_sent_recently(log_file=log_file, text_to_check=print_text):
+                        send_email_smtp(url=url, title=product_name, mode="price", current_price=current_price, threshold=threshold)
+                        print_log(print_text, file=log_file)
+                    else:
+                        print_log(f"Email already sent for {product_name} in the last {2} days.", file=log_file)
+            elif current_price is None:
+                print_log(f"No current price found for the product {product_name}.", file=log_file)
+
+        else:
+            if discount is not None and title:
+                print_log(f"The product {product_name} has a discount of {discount}%.", file=log_file)
+                if discount >= threshold:
+                    print_text = f"Notification sent: {product_name} with a {discount:.0f}% discount (threshold {threshold:.0f}%)."
+                    if not was_email_sent_recently(log_file=log_file, text_to_check=print_text):
+                        send_email_smtp(url=url, title=product_name, mode="discount", discount=discount, threshold=threshold)
+                        print_log(print_text, file=log_file)
+                    else:
+                        print_log(f"Email already sent for {product_name} in the last {2} days.", file=log_file)
+            elif discount is None:
+                print_log(f"No discount found for the product {product_name}.", file=log_file)
