@@ -79,6 +79,45 @@ def load_products(path="products.txt", default_discount_threshold=DEFAULT_DISCOU
 PRODUCTS = load_products("products.txt", DEFAULT_DISCOUNT_THRESHOLD)
 
 # Functions
+def _parse_price_from_whole_span(whole_span):
+    """Convierte un span .a-price-whole (+ fracción adyacente) a float."""
+    whole_text = whole_span.get_text(strip=True)
+    whole_digits = re.sub(r"[^\d]", "", whole_text)
+    if not whole_digits:
+        return None
+
+    fraction_span = whole_span.find_next_sibling("span", class_="a-price-fraction")
+    if fraction_span:
+        fraction_digits = re.sub(r"[^\d]", "", fraction_span.get_text(strip=True))
+        if fraction_digits:
+            return float(f"{whole_digits}.{fraction_digits}")
+
+    return float(whole_digits)
+
+
+def _extract_main_product_price(soup):
+    """
+    Extrae el precio SOLO del bloque principal del producto en la PDP.
+    Si no está disponible en ese bloque, devuelve None.
+    """
+    # Priorizamos el acordeón de producto NUEVO para no tomar el de usados/recomendados.
+    candidate_selectors = [
+        "#ppd #apex_desktop_newAccordionRow #corePriceDisplay_desktop_feature_div span.a-price.priceToPay span.a-price-whole",
+        "#ppd #apex_desktop_newAccordionRow #corePrice_feature_div span.a-price.priceToPay span.a-price-whole",
+        "#ppd #corePriceDisplay_desktop_feature_div span.a-price.priceToPay span.a-price-whole",
+        "#ppd #corePrice_feature_div span.a-price.priceToPay span.a-price-whole",
+    ]
+
+    for selector in candidate_selectors:
+        whole_span = soup.select_one(selector)
+        if whole_span:
+            parsed = _parse_price_from_whole_span(whole_span)
+            if parsed is not None:
+                return parsed
+
+    return None
+
+
 def get_product_data(url):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
@@ -88,12 +127,7 @@ def get_product_data(url):
     # Price (whole number)
     current_price = None
     try:
-        price_span = soup.find("span", class_="a-price-whole")
-        if price_span:
-            price_text = price_span.get_text(strip=True)
-            digits = re.sub(r"[^\d]", "", price_text)
-            if digits:
-                current_price = float(digits)
+        current_price = _extract_main_product_price(soup)
     except Exception as e:
         print_log(f"Error extracting current price: {e}", type="ERROR", file=log_file)
         current_price = None
